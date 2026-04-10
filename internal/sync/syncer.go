@@ -1,66 +1,79 @@
 package sync
 
 import (
+	"context"
 	"fmt"
+	"log"
 
-	"github.com/yourusername/vaultpipe/internal/envfile"
-	"github.com/yourusername/vaultpipe/internal/vault"
+	"github.com/user/vaultpipe/internal/envfile"
 )
 
-// Result holds the outcome of a sync operation.
-type Result struct {
-	Path    string
-	Diff    []envfile.DiffEntry
-	Written bool
+// VaultClient is the interface for fetching secrets from Vault.
+type VaultClient interface {
+	GetSecrets(ctx context.Context, path string) (map[string]string, error)
 }
 
-// Options configures the behaviour of a sync run.
+// Options configures Syncer behavior.
 type Options struct {
-	// DryRun prevents any writes; only the diff is computed.
 	DryRun bool
+	Backup bool
 }
 
-// Syncer orchestrates fetching secrets from Vault and writing them to a
-// local .env file.
+// Syncer orchestrates pulling secrets from Vault and writing them to an env file.
 type Syncer struct {
-	client *vault.Client
+	vault  VaultClient
+	opts   Options
 }
 
-// New creates a Syncer backed by the supplied Vault client.
-func New(client *vault.Client) *Syncer {
-	return &Syncer{client: client}
+// New creates a new Syncer.
+func New(vault VaultClient, opts Options) *Syncer {
+	return &Syncer{vault: vault, opts: opts}
 }
 
-// Sync fetches secrets at vaultPath and merges them into envPath.
-// When opts.DryRun is true the file is never modified.
-func (s *Syncer) Sync(vaultPath, envPath string, opts Options) (Result, error) {
-	secrets, err := s.client.GetSecrets(vaultPath)
+// Sync fetches secrets from the given Vault path and merges them into envPath.
+// It returns the diff so callers can display a summary.
+func (s *Syncer) Sync(ctx context.Context, vaultPath, envPath string) ([]envfile.DiffEntry, error) {
+	secrets, err := s.vault.GetSecrets(ctx, vaultPath)
 	if err != nil {
-		return Result{}, fmt.Errorf("fetching secrets from vault: %w", err)
+		return nil, fmt.Errorf("sync: fetch secrets: %w", err)
 	}
 
 	existing, err := envfile.Parse(envPath)
-	if err != nil {
-		// Treat a missing file as an empty map so we still write it.
-		existing = map[string]string{}
+	if err != nil && !isNotExist(err) {
+		return nil, fmt.Errorf("sync: parse env file: %w", err)
 	}
 
 	diffs := envfile.Diff(existing, secrets)
-
-	result := Result{
-		Path: envPath,
-		Diff: diffs,
+	if !envfile.HasChanges(diffs) {
+		log.Println("vaultpipe: no changes detected")
+		return diffs, nil
 	}
 
-	if opts.DryRun || !envfile.HasChanges(diffs) {
-		return result, nil
+	if s.opts.DryRun {
+		log.Println("vaultpipe: dry-run mode — no files written")
+		return diffs, nil
 	}
 
-	merged := envfile.Merge(existing, secrets)
-	if err := envfile.Write(envPath, merged); err != nil {
-		return result, fmt.Errorf("writing env file: %w", err)
+	if s.opts.Backup {
+		backupPath, err := envfile.Backup(envPath, envfile.DefaultBackupOptions())
+		if err != nil {
+			return nil, fmt.Errorf("sync: backup: %w", err)
+		}
+		if backupPath != "" {
+			log.Printf("vaultpipe: backup written to %s", backupPath)
+		}
 	}
 
-	result.Written = true
-	return result, nil
+	if err := envfile.Merge(envPath, secrets); err != nil {
+		return nil, fmt.Errorf("sync: write env file: %w", err)
+	}
+
+	return diffs, nil
+}
+
+func isNotExist(err error) bool {
+	if err == nil {
+		return false
+	}
+	return os.IsNotExist(err)
 }

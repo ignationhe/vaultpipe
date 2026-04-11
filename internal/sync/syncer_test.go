@@ -22,12 +22,21 @@ func makeVaultServer(t *testing.T, data map[string]interface{}) *httptest.Server
 	}))
 }
 
-func TestSync_WritesSecretsToEnvFile(t *testing.T) {
-	srv := makeVaultServer(t, map[string]interface{}{"KEY": "value"})
-	defer srv.Close()
+// newTestSyncer creates a Syncer backed by a test Vault server returning the
+// given secrets. It registers cleanup of the server via t.Cleanup.
+func newTestSyncer(t *testing.T, secrets map[string]interface{}) *Syncer {
+	t.Helper()
+	srv := makeVaultServer(t, secrets)
+	t.Cleanup(srv.Close)
+	client, err := vaultclient.NewClient(srv.URL, "test-token")
+	if err != nil {
+		t.Fatalf("failed to create vault client: %v", err)
+	}
+	return New(client)
+}
 
-	client, _ := vaultclient.NewClient(srv.URL, "test-token")
-	syncer := New(client)
+func TestSync_WritesSecretsToEnvFile(t *testing.T) {
+	syncer := newTestSyncer(t, map[string]interface{}{"KEY": "value"})
 
 	tmp := filepath.Join(t.TempDir(), ".env")
 	res, err := syncer.Sync(Options{VaultPath: "secret/data/app", EnvFile: tmp})
@@ -44,11 +53,7 @@ func TestSync_WritesSecretsToEnvFile(t *testing.T) {
 }
 
 func TestSync_DryRunDoesNotWrite(t *testing.T) {
-	srv := makeVaultServer(t, map[string]interface{}{"KEY": "value"})
-	defer srv.Close()
-
-	client, _ := vaultclient.NewClient(srv.URL, "test-token")
-	syncer := New(client)
+	syncer := newTestSyncer(t, map[string]interface{}{"KEY": "value"})
 
 	tmp := filepath.Join(t.TempDir(), ".env")
 	res, err := syncer.Sync(Options{VaultPath: "secret/data/app", EnvFile: tmp, DryRun: true})
@@ -64,14 +69,10 @@ func TestSync_DryRunDoesNotWrite(t *testing.T) {
 }
 
 func TestSync_NoWriteWhenUnchanged(t *testing.T) {
-	srv := makeVaultServer(t, map[string]interface{}{"KEY": "value"})
-	defer srv.Close()
+	syncer := newTestSyncer(t, map[string]interface{}{"KEY": "value"})
 
 	tmp := filepath.Join(t.TempDir(), ".env")
 	_ = envfile.Write(tmp, map[string]string{"KEY": "value"})
-
-	client, _ := vaultclient.NewClient(srv.URL, "test-token")
-	syncer := New(client)
 
 	res, err := syncer.Sync(Options{VaultPath: "secret/data/app", EnvFile: tmp})
 	if err != nil {
@@ -83,11 +84,7 @@ func TestSync_NoWriteWhenUnchanged(t *testing.T) {
 }
 
 func TestSync_FilterApplied(t *testing.T) {
-	srv := makeVaultServer(t, map[string]interface{}{"APP_KEY": "v1", "OTHER": "v2"})
-	defer srv.Close()
-
-	client, _ := vaultclient.NewClient(srv.URL, "test-token")
-	syncer := New(client)
+	syncer := newTestSyncer(t, map[string]interface{}{"APP_KEY": "v1", "OTHER": "v2"})
 
 	tmp := filepath.Join(t.TempDir(), ".env")
 	_, err := syncer.Sync(Options{

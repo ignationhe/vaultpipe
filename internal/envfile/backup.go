@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"time"
 )
 
@@ -50,6 +51,8 @@ func Backup(envPath string, opts BackupOptions) (string, error) {
 }
 
 // pruneBackups removes the oldest backups if the count exceeds maxBackups.
+// Backups are sorted lexicographically by name; because the timestamp format
+// is sortable (20060102T150405Z), this is equivalent to sorting by age.
 func pruneBackups(dir, base string, maxBackups int) error {
 	pattern := filepath.Join(dir, base+".*.bak")
 	matches, err := filepath.Glob(pattern)
@@ -61,7 +64,9 @@ func pruneBackups(dir, base string, maxBackups int) error {
 		return nil
 	}
 
-	// matches from Glob are lexicographically sorted; oldest timestamps come first.
+	// Ensure lexicographic order so oldest timestamps are removed first.
+	sort.Strings(matches)
+
 	toRemove := matches[:len(matches)-maxBackups]
 	for _, f := range toRemove {
 		if err := os.Remove(f); err != nil && !os.IsNotExist(err) {

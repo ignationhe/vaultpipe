@@ -48,6 +48,15 @@ func StripPrefix(secrets map[string]string, prefix string) map[string]string {
 	return result
 }
 
+// FilterAndStrip is a convenience function that applies Filter followed by
+// StripPrefix using opts.Prefix. This is the common pattern where callers
+// want only keys matching a prefix and then want the prefix removed from
+// the resulting keys.
+func FilterAndStrip(secrets map[string]string, opts FilterOptions) map[string]string {
+	filtered := Filter(secrets, opts)
+	return StripPrefix(filtered, opts.Prefix)
+}
+
 func toSet(keys []string) map[string]struct{} {
 	s := make(map[string]struct{}, len(keys))
 	for _, k := range keys {

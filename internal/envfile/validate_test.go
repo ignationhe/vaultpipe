@@ -92,3 +92,18 @@ func TestValidationResult_ErrorString(t *testing.T) {
 		t.Error("expected non-empty error string")
 	}
 }
+
+func TestValidate_MultipleInvalidKeys(t *testing.T) {
+	env := map[string]string{
+		"1INVALID": "value",
+		"BAD-KEY":  "value",
+		"VALID_KEY": "value",
+	}
+	result := Validate(env, DefaultValidateOptions())
+	if !result.HasErrors() {
+		t.Fatal("expected validation errors for invalid keys")
+	}
+	if len(result.Errors) != 2 {
+		t.Errorf("expected 2 errors, got %d", len(result.Errors))
+	}
+}

@@ -9,64 +9,78 @@ import (
 	"github.com/yourusername/vaultpipe/internal/envfile"
 )
 
-var auditCmd = &cobra.Command{
-	Use:   "audit <before.env> <after.env>",
-	Short: "Show an audit log of changes between two env files",
-	Args:  cobra.ExactArgs(2),
-	RunE:  runAudit,
-}
+var (
+	auditEnvFile    string
+	auditOutputFile string
+	auditFormat     string
+	auditRedact     bool
+	auditUnchanged  bool
+)
 
 func init() {
-	auditCmd.Flags().StringP("format", "f", "text", "Output format: text or json")
-	auditCmd.Flags().StringP("output", "o", "", "Write audit log to file (appends)")
-	auditCmd.Flags().Bool("include-unchanged", false, "Include unchanged keys in the audit log")
-	auditCmd.Flags().Bool("no-redact", false, "Do not redact secret values in the audit log")
-	auditCmd.Flags().StringP("source", "s", "", "Label the source of the changes (e.g. vault path)")
+	auditCmd := newAuditCmd()
 	rootCmd.AddCommand(auditCmd)
 }
 
-func runAudit(cmd *cobra.Command, args []string) error {
-	beforePath, afterPath := args[0], args[1]
-
-	before, err := envfile.Parse(beforePath)
-	if err != nil && !os.IsNotExist(err) {
-		return fmt.Errorf("reading before file: %w", err)
+func newAuditCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "audit",
+		Short: "Audit changes between two .env files",
+		Long: `Compare two .env files and produce an audit log of added, removed,
+updated, and optionally unchanged keys. Output can be written as plain
+text or JSON and optionally saved to a file.`,
+		Example: `  vaultpipe audit --from .env.before --to .env --format json
+  vaultpipe audit --from .env.before --to .env --output audit.log`,
+		RunE: runAudit,
 	}
-	after, err := envfile.Parse(afterPath)
-	if err != nil {
-		return fmt.Errorf("reading after file: %w", err)
+
+	cmd.Flags().StringVar(&auditEnvFile, "from", "", "path to the previous .env file (required)")
+	cmd.Flags().StringVar(&auditOutputFile, "output", "", "path to write the audit log (default: stdout)")
+	cmd.Flags().StringVar(&auditFormat, "format", "text", "output format: text or json")
+	cmd.Flags().BoolVar(&auditRedact, "redact", true, "redact sensitive values in the audit log")
+	cmd.Flags().BoolVar(&auditUnchanged, "unchanged", false, "include unchanged keys in the audit log")
+	cmd.Flags().StringVar(&syncEnvFile, "to", ".env", "path to the current .env file")
+
+	_ = cmd.MarkFlagRequired("from")
+
+	return cmd
+}
+
+func runAudit(cmd *cobra.Command, args []string) error {
+	before, err := envfile.Parse(auditEnvFile)
+	if err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("reading --from file: %w", err)
+	}
+	if before == nil {
+		before = map[string]string{}
+	}
+
+	after, err := envfile.Parse(syncEnvFile)
+	if err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("reading --to file: %w", err)
+	}
+	if after == nil {
+		after = map[string]string{}
 	}
 
 	diffs := envfile.Diff(before, after)
 
 	opts := envfile.DefaultAuditOptions()
-	if v, _ := cmd.Flags().GetBool("include-unchanged"); v {
-		opts.IncludeUnchanged = true
-	}
-	if v, _ := cmd.Flags().GetBool("no-redact"); v {
-		opts.RedactValues = false
-	}
-	if v, _ := cmd.Flags().GetString("source"); v != "" {
-		opts.Source = v
+	opts.IncludeUnchanged = auditUnchanged
+	opts.Redact = auditRedact
+
+	log, err := envfile.Audit(diffs, opts)
+	if err != nil {
+		return fmt.Errorf("generating audit log: %w", err)
 	}
 
-	log := envfile.Audit(diffs, opts)
-
-	fmtStr, _ := cmd.Flags().GetString("format")
-	fmt := envfile.AuditFormatText
-	if fmtStr == "json" {
-		fmt = envfile.AuditFormatJSON
-	}
-
-	outPath, _ := cmd.Flags().GetString("output")
-	if outPath != "" {
-		if err := envfile.WriteAuditLogToFile(log, outPath, fmt); err != nil {
-			return err
+	if auditOutputFile != "" {
+		if err := envfile.WriteAuditLogToFile(log, auditOutputFile, auditFormat); err != nil {
+			return fmt.Errorf("writing audit log to file: %w", err)
 		}
-		cmd.Printf("Audit log written to %s\n", outPath)
-		cmd.Printf("%s\n", log.Summary())
+		fmt.Fprintf(cmd.OutOrStdout(), "audit log written to %s\n", auditOutputFile)
 		return nil
 	}
 
-	return envfile.WriteAuditLog(log, cmd.OutOrStdout(), fmt)
+	return envfile.WriteAuditLog(log, cmd.OutOrStdout(), auditFormat)
 }

@@ -72,3 +72,28 @@ func TestRename_PatternThenWrite(t *testing.T) {
 		t.Errorf("expected CURRENT_DB_URL, got %v", renamed)
 	}
 }
+
+func TestRename_NoRules_ReturnsOriginal(t *testing.T) {
+	src := map[string]string{
+		"FOO": "bar",
+		"BAZ": "qux",
+	}
+
+	opts := DefaultRenameOptions()
+	// No rules set — output should be identical to input.
+
+	renamed, err := Rename(src, opts)
+	if err != nil {
+		t.Fatalf("Rename error: %v", err)
+	}
+
+	for k, v := range src {
+		if renamed[k] != v {
+			t.Errorf("expected %s=%q, got %q", k, v, renamed[k])
+		}
+	}
+
+	if len(renamed) != len(src) {
+		t.Errorf("expected %d keys, got %d", len(src), len(renamed))
+	}
+}

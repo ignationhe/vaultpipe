@@ -35,6 +35,10 @@ func runValidate(cmd *cobra.Command, _ []string) error {
 
 	env, err := envfile.Parse(filePath)
 	if err != nil {
+		// Provide a more actionable message when the file does not exist.
+		if os.IsNotExist(err) {
+			return fmt.Errorf("file not found: %s", filePath)
+		}
 		return fmt.Errorf("failed to parse %s: %w", filePath, err)
 	}
 

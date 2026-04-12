@@ -64,3 +64,40 @@ func TestTransform_WildcardTrimThenDiff(t *testing.T) {
 		t.Errorf("expected no changes after trim, but got diffs: %+v", diffs)
 	}
 }
+
+// TestTransform_WriteAndReparse_PreservesAllKeys verifies that every key
+// present in the source map survives a full Write → Parse round-trip without
+// any keys being silently dropped.
+func TestTransform_WriteAndReparse_PreservesAllKeys(t *testing.T) {
+	src := map[string]string{
+		"ALPHA": "one",
+		"BETA":  "two",
+		"GAMMA": "three",
+	}
+
+	tmp, err := os.CreateTemp(t.TempDir(), "*.env")
+	if err != nil {
+		t.Fatalf("CreateTemp: %v", err)
+	}
+	tmp.Close()
+
+	if err := Write(src, tmp.Name()); err != nil {
+		t.Fatalf("Write: %v", err)
+	}
+
+	parsed, err := Parse(tmp.Name())
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+
+	for key, want := range src {
+		got, ok := parsed[key]
+		if !ok {
+			t.Errorf("key %q missing after round-trip", key)
+			continue
+		}
+		if got != want {
+			t.Errorf("key %q: expected %q, got %q", key, want, got)
+		}
+	}
+}

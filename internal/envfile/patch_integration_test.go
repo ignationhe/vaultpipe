@@ -89,3 +89,25 @@ func TestPatch_ThenDiff_DetectsChanges(t *testing.T) {
 
 	_ = os.Getenv("CI") // suppress unused import warning
 }
+
+// TestPatch_UnchangedKey_NotInDiff verifies that keys untouched by a patch
+// do not appear as changed entries in the resulting diff.
+func TestPatch_UnchangedKey_NotInDiff(t *testing.T) {
+	env := map[string]string{
+		"A": "1",
+		"B": "2",
+	}
+
+	patched, err := Patch(env, []PatchRule{
+		{Op: PatchSet, Key: "A", Value: "changed"},
+	}, DefaultPatchOptions())
+	if err != nil {
+		t.Fatalf("Patch: %v", err)
+	}
+
+	for _, d := range Diff(env, patched) {
+		if d.Key == "B" && d.Status != DiffUnchanged {
+			t.Errorf("expected B to be unchanged, got status %q", d.Status)
+		}
+	}
+}
